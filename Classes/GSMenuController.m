@@ -210,11 +210,9 @@
 
             if ([GSNotifier showCantSwitchToIntegratedOnlyMessage:taskNames]) {
                 for (NSDictionary *task in taskList) {
-                    NSNumber *pid = [task objectForKey:@"pid"];
-                    if ([pid class] != [NSNumber class]) {
-                        return;
-                    }
-                    killpg(getpgid([pid intValue]), SIGTERM);
+                    long *pid = [[task objectForKey:@"pid"] integerValue];
+                    GTMLoggerInfo(@"Killing %ld", pid);
+                    kill(pid, SIGTERM);
                 }
             } else {
                 return;
