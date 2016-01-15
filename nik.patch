@@ -1,0 +1,223 @@
+From e3b56ff87261819ffccb93fecd4c120cd2be78a2 Mon Sep 17 00:00:00 2001
+From: Niklas Korz <korz.niklask@gmail.com>
+Date: Sun, 14 Apr 2013 14:53:49 +0200
+Subject: [PATCH 1/5] Added 'Kill processes' button. Closes issue #111
+
+---
+ Classes/GSMenuController.m | 14 ++++++++++++--
+ Classes/GSNotifier.h       |  2 +-
+ Classes/GSNotifier.m       | 12 +++++++++---
+ 3 files changed, 22 insertions(+), 6 deletions(-)
+
+diff --git a/Classes/GSMenuController.m b/Classes/GSMenuController.m
+index 6c6e248..1f959d5 100644
+--- a/Classes/GSMenuController.m
++++ b/Classes/GSMenuController.m
+@@ -16,6 +16,9 @@
+ 
+ #import <ReactiveCocoa/ReactiveCocoa.h>
+ 
++#include <signal.h>
++#include <unistd.h>
++
+ #define kImageIconIntegratedName    @"integrated"
+ #define kImageIconDiscreteName      @"discrete"
+ #define kImageIconOpenSuffix        @"-white"
+@@ -196,6 +199,7 @@
+ 
+     if (sender == integratedOnly) {
+         NSArray *taskList = [GSProcess getTaskList];
++        NSLog(@"Tasks: %@", taskList);
+         if (taskList.count > 0) {
+             GTMLoggerInfo(@"Not setting Integrated Only because of dependencies list items: %@", taskList);
+ 
+@@ -205,8 +209,14 @@
+                 [taskNames addObject:taskName];
+             }
+ 
+-            [GSNotifier showCantSwitchToIntegratedOnlyMessage:taskNames];
+-            return;
++            if ([GSNotifier showCantSwitchToIntegratedOnlyMessage:taskNames]) {
++                for (NSDictionary *task in taskList) {
++                    pid_t pid = [(NSNumber *)[task objectForKey:@"pid"] intValue];
++                    killpg(getpgid(pid), SIGTERM);
++                }
++            } else {
++                return;
++            }
+         }
+ 
+         GTMLoggerInfo(@"Setting Integrated Only...");
+diff --git a/Classes/GSNotifier.h b/Classes/GSNotifier.h
+index 39a7150..8969bff 100644
+--- a/Classes/GSNotifier.h
++++ b/Classes/GSNotifier.h
+@@ -16,7 +16,7 @@
+ + (void)showGPUChangeNotification:(GSGPUType)type;
+ + (void)showOneTimeNotification;
+ + (void)showUnsupportedMachineMessage;
+-+ (void)showCantSwitchToIntegratedOnlyMessage:(NSArray *)taskList;
+++ (BOOL)showCantSwitchToIntegratedOnlyMessage:(NSArray *)taskList;
+ 
+ + (BOOL)notificationCenterIsAvailable;
+ 
+diff --git a/Classes/GSNotifier.m b/Classes/GSNotifier.m
+index 7d49fcf..cf90b52 100644
+--- a/Classes/GSNotifier.m
++++ b/Classes/GSNotifier.m
+@@ -108,7 +108,7 @@ static NSString *_lastMessage = nil;
+     [alert runModal];
+ }
+ 
+-+ (void)showCantSwitchToIntegratedOnlyMessage:(NSArray *)taskList
+++ (BOOL)showCantSwitchToIntegratedOnlyMessage:(NSArray *)taskList
+ {
+     NSString *messageKey = [NSString stringWithFormat:@"Can'tSwitchToIntegratedOnly%@", (taskList.count > 1 ? @"Plural" : @"Singular")];
+ 
+@@ -119,11 +119,17 @@ static NSString *_lastMessage = nil;
+     NSAlert *alert = [NSAlert alertWithMessageText:Str(messageKey)
+                                      defaultButton:@"OK"
+                                    alternateButton:@"Why?"
+-                                       otherButton:nil
++                                       otherButton:@"Kill processes"
+                          informativeTextWithFormat:@"%@", descriptionText];
+ 
+-    if ([alert runModal] == NSAlertAlternateReturn)
++    NSInteger alertReturn = [alert runModal];
++    if (alertReturn == NSAlertAlternateReturn)
+         [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:kIntegratedOnlyMessageExplanationURL]];
++    else if (alertReturn == NSAlertOtherReturn)
++        return YES;
++
++    return NO;
++    
+ }
+ 
+ + (BOOL)notificationCenterIsAvailable
+-- 
+2.7.0
+
+
+From 669515104a2a5d8af489b6a86ebe8a111ddce241 Mon Sep 17 00:00:00 2001
+From: Niklas Korz <korz.niklask@gmail.com>
+Date: Sun, 14 Apr 2013 15:06:58 +0200
+Subject: [PATCH 2/5] Fixed a crash which happened because the program tried to
+ kill the External Display 'process'
+
+---
+ Classes/GSMenuController.m | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/Classes/GSMenuController.m b/Classes/GSMenuController.m
+index 1f959d5..5251211 100644
+--- a/Classes/GSMenuController.m
++++ b/Classes/GSMenuController.m
+@@ -211,8 +211,10 @@
+ 
+             if ([GSNotifier showCantSwitchToIntegratedOnlyMessage:taskNames]) {
+                 for (NSDictionary *task in taskList) {
+-                    pid_t pid = [(NSNumber *)[task objectForKey:@"pid"] intValue];
+-                    killpg(getpgid(pid), SIGTERM);
++                    NSNumber *pid = [task objectForKey:@"pid"];
++                    if (pid != nil) {
++                        killpg(getpgid([pid intValue]), SIGTERM);
++                    }
+                 }
+             } else {
+                 return;
+-- 
+2.7.0
+
+
+From fe9ce744caa04814dafe7e1c71ec304e40432ccf Mon Sep 17 00:00:00 2001
+From: Niklas Korz <korz.niklask@gmail.com>
+Date: Sun, 14 Apr 2013 15:08:14 +0200
+Subject: [PATCH 3/5] Short fix to the last one, which does basically what the
+ other one should have
+
+---
+ Classes/GSMenuController.m | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/Classes/GSMenuController.m b/Classes/GSMenuController.m
+index 5251211..5222bcd 100644
+--- a/Classes/GSMenuController.m
++++ b/Classes/GSMenuController.m
+@@ -212,9 +212,10 @@
+             if ([GSNotifier showCantSwitchToIntegratedOnlyMessage:taskNames]) {
+                 for (NSDictionary *task in taskList) {
+                     NSNumber *pid = [task objectForKey:@"pid"];
+-                    if (pid != nil) {
+-                        killpg(getpgid([pid intValue]), SIGTERM);
++                    if (pid == nil) {
++                        return;
+                     }
++                    killpg(getpgid([pid intValue]), SIGTERM);
+                 }
+             } else {
+                 return;
+-- 
+2.7.0
+
+
+From 4f44543094fc51042fa494cc1f72b03d0467f0a7 Mon Sep 17 00:00:00 2001
+From: Niklas Korz <korz.niklask@gmail.com>
+Date: Sun, 14 Apr 2013 15:46:51 +0200
+Subject: [PATCH 4/5] nil check didn't work, but checking for class NSNumber
+ does
+
+---
+ Classes/GSMenuController.m | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/Classes/GSMenuController.m b/Classes/GSMenuController.m
+index 5222bcd..f0bfbfb 100644
+--- a/Classes/GSMenuController.m
++++ b/Classes/GSMenuController.m
+@@ -199,7 +199,6 @@
+ 
+     if (sender == integratedOnly) {
+         NSArray *taskList = [GSProcess getTaskList];
+-        NSLog(@"Tasks: %@", taskList);
+         if (taskList.count > 0) {
+             GTMLoggerInfo(@"Not setting Integrated Only because of dependencies list items: %@", taskList);
+ 
+@@ -212,7 +211,8 @@
+             if ([GSNotifier showCantSwitchToIntegratedOnlyMessage:taskNames]) {
+                 for (NSDictionary *task in taskList) {
+                     NSNumber *pid = [task objectForKey:@"pid"];
+-                    if (pid == nil) {
++                    NSLog(@"%@", [pid class]);
++                    if ([pid class] != [NSNumber class]) {
+                         return;
+                     }
+                     killpg(getpgid([pid intValue]), SIGTERM);
+-- 
+2.7.0
+
+
+From c7ef80ccead0b08b725536ee6e90717b53a05a69 Mon Sep 17 00:00:00 2001
+From: Niklas Korz <korz.niklask@gmail.com>
+Date: Sun, 14 Apr 2013 15:49:05 +0200
+Subject: [PATCH 5/5] Removed NSLog which I used for testing (sorry for this
+ one)
+
+---
+ Classes/GSMenuController.m | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/Classes/GSMenuController.m b/Classes/GSMenuController.m
+index f0bfbfb..366aaa1 100644
+--- a/Classes/GSMenuController.m
++++ b/Classes/GSMenuController.m
+@@ -211,7 +211,6 @@
+             if ([GSNotifier showCantSwitchToIntegratedOnlyMessage:taskNames]) {
+                 for (NSDictionary *task in taskList) {
+                     NSNumber *pid = [task objectForKey:@"pid"];
+-                    NSLog(@"%@", [pid class]);
+                     if ([pid class] != [NSNumber class]) {
+                         return;
+                     }
+-- 
+2.7.0
+
